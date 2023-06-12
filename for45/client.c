@@ -13,7 +13,6 @@ int main(int argc, char *argv[])
     struct sockaddr_in echo_serv_addr; /* Echo server address */
     unsigned short echo_serv_port;     /* Echo server port */
     char *serv_ip;                     /* Server IP address (dotted quad) */
-    int buffer[MAX_INTS];
     int bytes_rcvd;                    /* Bytes read in single recv() */
 
     if ((argc < 3) || (argc > 4)) {
@@ -23,6 +22,8 @@ int main(int argc, char *argv[])
     }
 
     serv_ip = argv[2];
+    int decoder[26];
+    getDecoder(decoder, argv[1]);
 
     if (argc == 4) {
        echo_serv_port = atoi(argv[3]); /* Use given port, if any */
@@ -31,7 +32,7 @@ int main(int argc, char *argv[])
     }
 
     /* Create a reliable, stream socket using TCP */
-    if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+    if ((sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         dieWithError("socket() failed");
     }
 
@@ -40,35 +41,49 @@ int main(int argc, char *argv[])
     echo_serv_addr.sin_family      = AF_INET;             /* Internet address family */
     echo_serv_addr.sin_addr.s_addr = inet_addr(serv_ip);   /* Server IP address */
     echo_serv_addr.sin_port        = htons(echo_serv_port); /* Server port */
-
-    /* Establish the connection to the echo server */
-    if (connect(sock, (struct sockaddr *) &echo_serv_addr, sizeof(echo_serv_addr)) < 0) {
-        dieWithError("connect() failed");
+    char *st = "Connected";
+    if (sendto(sock, st, strlen(st), 0, (struct sockaddr *)
+               &echo_serv_addr, sizeof(echo_serv_addr)) != strlen(st)) {
+        dieWithError("sendto() sent a different number of bytes than expected");
     }
 
-    if ((bytes_rcvd = recv(sock, buffer, sizeof(buffer), 0)) < 0) {
-        dieWithError("recv() failed");
+    struct sockaddr_in from_addr;     /* Source address of echo */
+    unsigned int from_size = sizeof(from_addr);
+
+    int32_t buffer[MAX_INTS];
+    if ((bytes_rcvd = recvfrom(sock, buffer, sizeof(buffer), 0,
+                               (struct sockaddr *) &from_addr, &from_size)) < 0) {
+        dieWithError("recvfrom() failed");
+    }
+    if (echo_serv_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
+        dieWithError("Error: received a packet from unknown source.\n");
     }
 
-    int decoder[26];
-    getDecoder(decoder, argv[1]);
-
+    char decoded[MAX_INTS + 1];
     for(; bytes_rcvd > 0;) {
-        char decoded[MAX_INTS + 1];
+        if (bytes_rcvd == 4 && buffer[0] == -1) {
+            break;
+        }
         int i = 0;
         printf("%d\n", bytes_rcvd);
+
         for (; i < bytes_rcvd / 4; ++i) {
             printf("%d ", buffer[i]);
             decoded[i] = getCodedLetter(decoder, buffer[i]);
         }
         printf("\n");
         decoded[i] = '\0';
-        if (send(sock, decoded, strlen(decoded), 0) != strlen(decoded)) {
-            dieWithError("send() sent a different number of bytes than expected");
+        if (sendto(sock, decoded, strlen(decoded), 0, (struct sockaddr *)
+                   &echo_serv_addr, sizeof(echo_serv_addr)) != strlen(decoded)) {
+            dieWithError("sendto() sent a different number of bytes than expected");
         }
         sleep(2);
-        if ((bytes_rcvd = recv(sock, buffer, sizeof(buffer), 0)) < 0) {
-            dieWithError("recv() failed");
+        if ((bytes_rcvd = recvfrom(sock, buffer, sizeof(buffer), 0,
+                                   (struct sockaddr *) &from_addr, &from_size)) < 0) {
+            dieWithError("recvfrom() failed");
+        }
+        if (echo_serv_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
+            dieWithError("Error: received a packet from unknown source.\n");
         }
     }
 
