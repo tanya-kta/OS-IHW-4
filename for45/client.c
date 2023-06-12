@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
         echo_serv_port = 7; /* 7 is the well-known port for the echo service */
     }
 
-    /* Create a reliable, stream socket using TCP */
+    /* Create a reliable, stream socket using UDP */
     if ((sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         dieWithError("socket() failed");
     }
