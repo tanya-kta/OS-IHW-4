@@ -1,36 +1,13 @@
 #include "../info.h"
-#include <sys/wait.h>
-#include <sys/mman.h>
-#include <semaphore.h>
 #include <unistd.h>
 #include <fcntl.h>
 
 
-void handleObserver(int serv_sock) {
-    int clnt_socket = acceptTcpConnection(serv_sock);
-
-    sem_post(&obs_p->parent_sem);
-    while (1) {
-        sem_wait(&obs_p->child_sem);
-        if (obs_p->type == MSG_TYPE_FINISH) {
-            break;
-        }
-        int size = strlen(obs_p->message);
-        if (send(clnt_socket, &obs_p->message, size, 0) != size) {
-            dieWithError("send() failed");
-        }
-        sem_post(&obs_p->parent_sem);
-    }
-    close(shmid);
-    close(clnt_socket);
-    close(serv_sock);
-    sem_post(&obs_p->parent_sem);
-}
-
-
 int main(int argc, char *argv[]) {
-    int serv_sock;                     /* Socket descriptor for server */
     unsigned short echo_serv_port;     /* Server port */
+    struct sockaddr_in from_addr;     /* Source address of echo */
+    unsigned int from_size = sizeof(from_addr);
+    int bytes_rcvd;
 
     if (argc != 5) {
         fprintf(stderr, "Usage:  %s <Clients number> <Input File Path> <Output File Path> <Server Port>\n", argv[0]);
@@ -38,152 +15,92 @@ int main(int argc, char *argv[]) {
     }
 
     echo_serv_port = atoi(argv[4]);
-
-    serv_sock = createTcpServerSocket(echo_serv_port);
-    process_number = atoi(argv[1]);
-
-    if ((shmid = shm_open(mem_name, O_CREAT | O_RDWR, S_IRWXU)) == -1) {
-        perror("shm_open");
-        dieWithError("server: object is already open");
-    } else {
-        printf("Object is open: name = %s, id = 0x%x\n", mem_name, shmid);
-    }
-    // Задание размера объекта памяти
-    if (ftruncate(shmid, sizeof(message_t) * process_number + sizeof(observer_t)) == -1) {
-        perror("ftruncate");
-        dieWithError("server: memory sizing error");
-    } else {
-        printf("Memory size set and = %lu\n", sizeof(message_t) * process_number + sizeof(observer_t));
-    }
-    // получить доступ к памяти
-    void *pointer = mmap(0, sizeof(message_t) * process_number + sizeof(observer_t),
-                         PROT_WRITE | PROT_READ, MAP_SHARED, shmid, 0);
-    msg_p = pointer;
-    obs_p = pointer + sizeof(message_t) * process_number;
-
-    for (int i = 0; i < process_number; ++i) {
-        if (sem_init(&msg_p[i].child_sem, 1, 0) == -1) {
-            dieWithError("Creating child semaphore went wrong");
-        }
-        if (sem_init(&msg_p[i].parent_sem, 1, 0) == -1) {
-            dieWithError("Creating parent semaphore went wrong");
-        }
-    }
-    if (sem_init(&obs_p->child_sem, 1, 0) == -1) {
-        dieWithError("Creating child semaphore went wrong");
-    }
-    if (sem_init(&obs_p->parent_sem, 1, 0) == -1) {
-        dieWithError("Creating parent semaphore went wrong");
-    }
-    prev = signal(SIGINT, parentHandleCtrlC);
-
-    for (int i = 0; i < process_number; ++i) {
-        pid_t process_id;
-        if ((process_id = fork()) < 0) {
-            dieWithError("fork() failed");
-        } else if (process_id == 0) {
-            signal(SIGINT, prev);
-            handleTcpClient(serv_sock, i);
-            exit(0);
-        }
-    }
-
-    for (int i = 0; i < process_number; ++i) { // дождаться, когда все клиенты подключатся к процессам сервера
-        sem_wait(&msg_p[i].parent_sem);
-    }
-
-    pid_t obs_id;
-    if ((obs_id = fork()) < 0) {
-        dieWithError("fork() failed");
-    } else if (obs_id == 0) {
-        signal(SIGINT, prev);
-        handleObserver(serv_sock);
-        exit(0);
-    }
-    sem_wait(&obs_p->parent_sem);
-    obs_p->type = MSG_TYPE_STRING;
-
-    char message[10000];
     int in_file = open(argv[2], O_RDONLY, S_IRWXU);
     int out_file = open(argv[3], O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU);
+    process_number = atoi(argv[1]);
+
+    createUdpServerSocket(echo_serv_port);
+    getAllClients();
+    getObserver();
+
+    char message[10000];
+    int32_t buffer[MAX_INTS];
+    char decoded_part[MAX_INTS + 1];
+    char decoded[(MAX_INTS + 1) * process_number];
     int status = 1;
     while (status == 1) {
         int num_of_running = 0;
         for (int i = 0; i < process_number; ++i, ++num_of_running) {
             int size = 0;
-            sprintf(message, "Send to client id %d message to decode: ", i);
-            int last_char = strlen(message);
             for (; size < MAX_INTS; ++size) {
-                status = readInt(in_file, &msg_p[i].coded[size]);
+                status = readInt(in_file, &buffer[size]);
                 if (status == -1) {
                     break;
                 }
-                sprintf(message + last_char, "%d ", msg_p[i].coded[size]);
-                last_char = strlen(message);
             }
             if (size == 0) {
                 break;
             }
-            msg_p[i].size = size;
-            msg_p[i].type = MSG_TYPE_INT;
-            sprintf(obs_p->message, "%s", message);
-            sem_post(&msg_p[i].child_sem);
-            sem_post(&obs_p->child_sem);
-            sem_wait(&obs_p->parent_sem);
-        }
-
-        for (int i = 0; i < num_of_running; ++i) {
-            sem_wait(&msg_p[i].parent_sem);
-            sprintf(message, "Received from client id %d decoded message: ", i);
-            int last_char = strlen(message);
-            printf("server parent from child id %d process after client decoding: ", i);
-            for (int j = 0; j < msg_p[i].size; ++j) {
-                printf("%c", msg_p[i].uncoded[j]);
-                sprintf(message + last_char, "%c", msg_p[i].uncoded[j]);
-                last_char = strlen(message);
-                write(out_file, &msg_p[i].uncoded[j], 1);
+            sprintf(message, "Send to decoder client id %d message to decode:\n", i);
+            for (int j = 0; j < size; ++j) {
+                sprintf(message + strlen(message), "%d ", buffer[j]);
             }
-            printf("\n");
-            sprintf(obs_p->message, "%s", message);
-            sem_post(&obs_p->child_sem);
-            sem_wait(&obs_p->parent_sem);
+            sprintf(message + strlen(message), "\n");
+            printf("%s", message);
+            if (sendto(sock, buffer, sizeof(int32_t) * size, 0,
+                       (struct sockaddr *) &clnt_adds[i], clnt_len) != sizeof(int32_t) * size) {
+                dieWithError("sendto() sent a different number of bytes than expected");
+            }
+            if (sendto(sock, message, strlen(message), 0,
+                       (struct sockaddr *) &obs_addr, obs_len) != strlen(message)) {
+                dieWithError("sendto() sent a different number of bytes than expected");
+            }
         }
+        sleep(2);
+        for (int i = 0; i < num_of_running; ++i) {
+            if ((bytes_rcvd = recvfrom(sock, decoded_part, MAX_INTS, 0,
+                                       (struct sockaddr *) &from_addr, &from_size)) < 0) {
+                dieWithError("recvfrom() failed");
+            }
+            decoded_part[bytes_rcvd] = '\0';
+            for (int index = 0; index < process_number; ++index) {
+                if (clnt_adds[index].sin_addr.s_addr == from_addr.sin_addr.s_addr &&
+                    clnt_adds[index].sin_port == from_addr.sin_port) {
+                    sprintf(message, "Received from client id %d message:\n%s\n", index, decoded_part);
+                    printf("%s", message);
+                    strcpy(&decoded[(MAX_INTS + 1) * index], decoded_part);
+                    if (sendto(sock, message, strlen(message), 0,
+                               (struct sockaddr *) &obs_addr, obs_len) != strlen(message)) {
+                        dieWithError("sendto() sent a different number of bytes than expected");
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < num_of_running; ++i) {
+            int size = strlen(&decoded[(MAX_INTS + 1) * i]);
+            if (size == 0) {
+                break;
+            }
+            write(out_file, &decoded[(MAX_INTS + 1) * i], size);
+        }
+    }
+    sprintf(message, "Finishing\n");
+    printf("%s", message);
+    if (sendto(sock, message, strlen(message), 0,
+               (struct sockaddr *) &obs_addr, obs_len) != strlen(message)) {
+        dieWithError("sendto() sent a different number of bytes than expected");
+    }
+    buffer[0] = -1;
+    for (int index = 0; index < process_number; ++index) {
+        if (sendto(sock, buffer, 4, 0, (struct sockaddr *) &clnt_adds[index], clnt_len) != 4) {
+            dieWithError("sendto() sent a different number of bytes than expected");
+        }
+    }
+    message[0] = '\0';
+    if (sendto(sock, message, 1, 0, (struct sockaddr *) &obs_addr, obs_len) != 1) {
+        dieWithError("sendto() sent a different number of bytes than expected");
     }
     close(in_file);
     close(out_file);
-
-    for (int i = 0; i < process_number; ++i) {
-        msg_p[i].type = MSG_TYPE_FINISH;
-        sem_post(&msg_p[i].child_sem);
-    }
-    obs_p->type = MSG_TYPE_FINISH;
-    sem_post(&obs_p->child_sem);
-    for (int i = 0; i < process_number; ++i) {
-        sem_wait(&msg_p[i].parent_sem);
-    }
-    sem_wait(&obs_p->parent_sem);
-    for (int i = 0; i < process_number; ++i) {
-        sem_destroy(&msg_p[i].child_sem);
-        sem_destroy(&msg_p[i].parent_sem);
-    }
-    sem_destroy(&obs_p->parent_sem);
-    sem_destroy(&obs_p->child_sem);
-    close(shmid);
-    if (shm_unlink(mem_name) == -1) {
-        perror("shm_unlink");
-        dieWithError("server: error getting pointer to shared memory");
-    }
-    process_number++;
-    while (process_number) /* Clean up all zombies */
-    {
-        int process_id = waitpid((pid_t) -1, NULL, WNOHANG);  /* Non-blocking wait */
-        if (process_id < 0)  /* waitpid() error? */ {
-            dieWithError("waitpid() failed");
-        } else if (process_id == 0)  /* No zombie to wait on */ {
-            break;
-        } else {
-            process_number--; /* Cleaned up after a child */
-        }
-    }
-    close(serv_sock);    /* Close client socket */
+    close(sock);    /* Close socket */
 }

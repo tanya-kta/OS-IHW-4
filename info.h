@@ -15,11 +15,12 @@
 #define MAX_INTS        30    // максимальная длина текстового сообщения
 
 
-void (*prev)(int);
 int process_number;
 int sock;
 struct sockaddr_in echo_serv_addr; /* Local address */
+struct sockaddr_in obs_addr; /* Local address */
 unsigned int clnt_len = sizeof(struct sockaddr_in);
+unsigned int obs_len = sizeof(struct sockaddr_in);
 struct sockaddr_in clnt_adds[10];
 
 void dieWithError(char *error_message) {
@@ -48,14 +49,25 @@ void createUdpServerSocket(unsigned short port) {
 void getAllClients() {
     for (int i = 0; i < process_number; ++i) {
         int msg_size;
-        char buffer[11];
-        if ((msg_size = recvfrom(sock, buffer, 10, 0,
+        char buffer[30];
+        if ((msg_size = recvfrom(sock, buffer, 29, 0,
                                  (struct sockaddr *) &clnt_adds[i], &clnt_len)) < 0) {
             dieWithError("recvfrom() failed");
         }
         buffer[msg_size] = '\0';
-        printf("Handling client %s with message %s\n", inet_ntoa(clnt_adds[i].sin_addr), buffer);
+        printf("Handling decoder client %s with message %s\n", inet_ntoa(clnt_adds[i].sin_addr), buffer);
     }
+}
+
+void getObserver() {
+    int msg_size;
+    char buffer[30];
+    if ((msg_size = recvfrom(sock, buffer, 29, 0,
+                             (struct sockaddr *) &obs_addr, &obs_len)) < 0) {
+        dieWithError("recvfrom() failed");
+    }
+    buffer[msg_size] = '\0';
+    printf("Handling observer client %s with message %s\n", inet_ntoa(obs_addr.sin_addr), buffer);
 }
 
 int readInt(int file, int *p) {

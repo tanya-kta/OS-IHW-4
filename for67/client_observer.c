@@ -13,12 +13,13 @@ int main(int argc, char *argv[])
     struct sockaddr_in echo_serv_addr; /* Echo server address */
     unsigned short echo_serv_port;     /* Echo server port */
     char *serv_ip;                     /* Server IP address (dotted quad) */
+    struct sockaddr_in from_addr;     /* Source address of echo */
+    unsigned int from_size = sizeof(from_addr);
     char buffer[10010];
     int bytes_rcvd;                    /* Bytes read in single recv() */
 
     if ((argc < 3) || (argc > 4)) {
-        fprintf(stderr, "Usage: %s <Server IP> [<Echo Port>]\n",
-                argv[0]);
+        fprintf(stderr, "Usage: %s <Server IP> [<Echo Port>]\n", argv[0]);
         exit(1);
     }
 
@@ -31,7 +32,7 @@ int main(int argc, char *argv[])
     }
 
     /* Create a reliable, stream socket using TCP */
-    if ((sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+    if ((sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         dieWithError("socket() failed");
     }
 
@@ -40,23 +41,35 @@ int main(int argc, char *argv[])
     echo_serv_addr.sin_family      = AF_INET;             /* Internet address family */
     echo_serv_addr.sin_addr.s_addr = inet_addr(serv_ip);   /* Server IP address */
     echo_serv_addr.sin_port        = htons(echo_serv_port); /* Server port */
-
-    /* Establish the connection to the echo server */
-    if (connect(sock, (struct sockaddr *) &echo_serv_addr, sizeof(echo_serv_addr)) < 0) {
-        dieWithError("connect() failed");
+    char *st = "Connected observer";
+    if (sendto(sock, st, strlen(st), 0, (struct sockaddr *)
+               &echo_serv_addr, sizeof(echo_serv_addr)) != strlen(st)) {
+        dieWithError("sendto() sent a different number of bytes than expected");
     }
 
-    if ((bytes_rcvd = recv(sock, buffer, sizeof(buffer) - 1, 0)) < 0) {
-        dieWithError("recv() failed");
+    if ((bytes_rcvd = recvfrom(sock, buffer, sizeof(buffer) - 1, 0,
+                               (struct sockaddr *) &from_addr, &from_size)) < 0) {
+        dieWithError("recvfrom() failed");
+    }
+    if (echo_serv_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
+        dieWithError("Error: received a packet from unknown source.\n");
     }
 
     for(; bytes_rcvd > 0;) {
+        if (bytes_rcvd == 1 && buffer[0] == '\0') {
+            break;
+        }
         printf("Received: ");
         buffer[bytes_rcvd] = '\0';
         printf("%s\n", buffer);
-        sleep(2);
-        if ((bytes_rcvd = recv(sock, buffer, sizeof(buffer) - 1, 0)) < 0)
-            dieWithError("recv() failed");
+        sleep(1);
+        if ((bytes_rcvd = recvfrom(sock, buffer, sizeof(buffer) - 1, 0,
+                                   (struct sockaddr *) &from_addr, &from_size)) < 0) {
+            dieWithError("recvfrom() failed");
+        }
+        if (echo_serv_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
+            dieWithError("Error: received a packet from unknown source.\n");
+        }
     }
 
     close(sock);
