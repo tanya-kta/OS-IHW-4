@@ -15,18 +15,16 @@ int main(int argc, char *argv[])
     char *serv_ip;                     /* Server IP address (dotted quad) */
     int bytes_rcvd;                    /* Bytes read in single recv() */
 
-    if ((argc < 3) || (argc > 4)) {
-       fprintf(stderr, "Usage: %s <Decoder Path> <Server IP> [<Echo Port>]\n",
-               argv[0]);
-       exit(1);
+    if ((argc < 2) || (argc > 3)) {
+        fprintf(stderr, "Usage: %s <Server IP> [<Echo Port>]\n",
+                argv[0]);
+        exit(1);
     }
 
-    serv_ip = argv[2];
-    int decoder[26];
-    getDecoder(decoder, argv[1]);
+    serv_ip = argv[1];
 
-    if (argc == 4) {
-        echo_serv_port = atoi(argv[3]); /* Use given port, if any */
+    if (argc == 3) {
+        echo_serv_port = atoi(argv[2]); /* Use given port, if any */
     } else {
         echo_serv_port = 7; /* 7 is the well-known port for the echo service */
     }
@@ -49,6 +47,15 @@ int main(int argc, char *argv[])
 
     struct sockaddr_in from_addr;     /* Source address of echo */
     unsigned int from_size = sizeof(from_addr);
+
+    int decoder[26];
+    if ((recvfrom(sock, decoder, sizeof(decoder), 0,
+                  (struct sockaddr *) &from_addr, &from_size)) < 0) {
+        dieWithError("recvfrom() failed");
+    }
+    if (echo_serv_addr.sin_addr.s_addr != from_addr.sin_addr.s_addr) {
+        dieWithError("Error: received a packet from unknown source.\n");
+    }
 
     int32_t buffer[MAX_INTS];
     if ((bytes_rcvd = recvfrom(sock, buffer, sizeof(buffer), 0,

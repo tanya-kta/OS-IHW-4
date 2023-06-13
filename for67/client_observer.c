@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
     char buffer[10010];
     int bytes_rcvd;                    /* Bytes read in single recv() */
 
-    if ((argc < 3) || (argc > 4)) {
+    if ((argc < 2) || (argc > 3)) {
         fprintf(stderr, "Usage: %s <Server IP> [<Echo Port>]\n", argv[0]);
         exit(1);
     }

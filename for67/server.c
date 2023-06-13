@@ -9,18 +9,18 @@ int main(int argc, char *argv[]) {
     unsigned int from_size = sizeof(from_addr);
     int bytes_rcvd;
 
-    if (argc != 5) {
-        fprintf(stderr, "Usage:  %s <Clients number> <Input File Path> <Output File Path> <Server Port>\n", argv[0]);
+    if (argc != 6) {
+        fprintf(stderr, "Usage:  %s <Clients number> <Decoder File Path> <Input File Path> <Output File Path> <Server Port>\n", argv[0]);
         exit(1);
     }
 
-    echo_serv_port = atoi(argv[4]);
-    int in_file = open(argv[2], O_RDONLY, S_IRWXU);
-    int out_file = open(argv[3], O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU);
+    echo_serv_port = atoi(argv[5]);
+    int in_file = open(argv[3], O_RDONLY, S_IRWXU);
+    int out_file = open(argv[4], O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU);
     process_number = atoi(argv[1]);
 
     createUdpServerSocket(echo_serv_port);
-    getAllClients();
+    getAllClients(argv[2]);
     getObserver();
 
     char message[10000];

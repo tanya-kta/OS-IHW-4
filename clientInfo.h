@@ -20,24 +20,6 @@ void dieWithError(char *error_message) {
     exit(1);
 }
 
-void getDecoder(int *decoder, char *filename) {
-    int file = open(filename, O_RDONLY, S_IRWXU);
-    char letter;
-    char line[13];
-    int code;
-    for (int i = 0; i < 26; ++i) {
-        for (int ind = 0; ind < 12; ++ind) {
-            int num = read(file, &line[ind], sizeof(char));
-            if (num == 0 || line[ind] == '\n' || line[ind] == '\0') {
-                line[ind] = '\0';
-                break;
-            }
-        }
-        sscanf(line, "%c %d", &letter, &code);
-        decoder[letter - 'a'] = code;
-    }
-}
-
 char getCodedLetter(int *decoder, int code) {
     for (int i = 0; i < 26; ++i) {
         if (decoder[i] == code) {

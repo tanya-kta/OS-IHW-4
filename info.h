@@ -46,13 +46,37 @@ void createUdpServerSocket(unsigned short port) {
     }
 }
 
-void getAllClients() {
+void getDecoder(int *decoder, char *filename) {
+    int file = open(filename, O_RDONLY, S_IRWXU);
+    char letter;
+    char line[13];
+    int code;
+    for (int i = 0; i < 26; ++i) {
+        for (int ind = 0; ind < 12; ++ind) {
+            int num = read(file, &line[ind], sizeof(char));
+            if (num == 0 || line[ind] == '\n' || line[ind] == '\0') {
+                line[ind] = '\0';
+                break;
+            }
+        }
+        sscanf(line, "%c %d", &letter, &code);
+        decoder[letter - 'a'] = code;
+    }
+}
+
+void getAllClients(char *filename) {
+    int decoder[26];
+    getDecoder(decoder, filename);
     for (int i = 0; i < process_number; ++i) {
         int msg_size;
         char buffer[30];
         if ((msg_size = recvfrom(sock, buffer, 29, 0,
                                  (struct sockaddr *) &clnt_adds[i], &clnt_len)) < 0) {
             dieWithError("recvfrom() failed");
+        }
+        if (sendto(sock, decoder, sizeof(decoder), 0,
+                   (struct sockaddr *) &clnt_adds[i], clnt_len) != sizeof(decoder)) {
+            dieWithError("sendto() sent a different number of bytes than expected");
         }
         buffer[msg_size] = '\0';
         printf("Handling decoder client %s with message %s\n", inet_ntoa(clnt_adds[i].sin_addr), buffer);
